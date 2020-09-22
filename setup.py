@@ -33,6 +33,10 @@ def is_platform_mac():
     return sys.platform == "darwin"
 
 
+def is_platform_zos():
+    return sys.platform == "zos"
+
+
 min_numpy_ver = "1.15.4"
 min_cython_ver = "0.29.16"  # note: sync with pyproject.toml
 
@@ -433,7 +437,7 @@ if is_platform_windows():
         extra_compile_args.append("/Z7")
         extra_link_args.append("/DEBUG")
 else:
-    extra_compile_args = ["-Werror"]
+    extra_compile_args = []
     extra_link_args = []
     if debugging_symbols_requested:
         extra_compile_args.append("-g")
@@ -682,15 +686,31 @@ for name, data in ext_data.items():
 
     include = data.get("include")
 
+    extra_comp_args = extra_compile_args.copy()
+    comp_macros = data.get("macros", macros)
+    undef_macros = []
+
+    if is_platform_zos():
+        language = data.get("language", None)
+        if language == "c++":
+            compiler = os.environ.get("CXX", "/bin/xlc++")
+            compiler_name = os.path.basename(compiler)
+
+            if (compiler_name == "xlc") or (compiler_name == "xlc++"):
+                comp_macros.append(("__s390__", "1"))
+                extra_comp_args.append("-qlanglvl=extended0x:nolibext")
+                undef_macros.append("_POSIX_THREADS")
+
     obj = Extension(
         f"pandas.{name}",
         sources=sources,
         depends=data.get("depends", []),
         include_dirs=include,
         language=data.get("language", "c"),
-        define_macros=data.get("macros", macros),
-        extra_compile_args=extra_compile_args,
+        define_macros=comp_macros,
+        extra_compile_args=extra_comp_args,
         extra_link_args=extra_link_args,
+        undef_macros=undef_macros
     )
 
     extensions.append(obj)
@@ -746,9 +766,7 @@ def setup_package():
         "install_requires": [
             "python-dateutil >= 2.7.3",
             "pytz >= 2017.2",
-            f"numpy >= {min_numpy_ver}",
         ],
-        "setup_requires": [f"numpy >= {min_numpy_ver}"],
         "zip_safe": False,
     }
 
